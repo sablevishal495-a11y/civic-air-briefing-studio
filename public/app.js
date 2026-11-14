@@ -63,7 +63,7 @@
   }
 
   function api(path, body) {
-    return fetch(path, {
+    return fetch(path + '?op=' + path.split('/').pop(), {
       method: body ? 'POST' : 'GET',
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined

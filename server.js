@@ -192,7 +192,7 @@ function createHandler(deps = {}) {
   function handleStatic(req, res, pathname) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed.' }, { Allow: 'GET, HEAD' });
     const file = files.get(pathname === '/' ? '/index.html' : pathname);
-    if (!file) return send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
+    if (!file) return send(res, 404, 'Not found: ' + req.url, { 'Content-Type': 'text/plain; charset=utf-8' });
     const headers = { 'Content-Type': file.type, ETag: file.etag, 'Cache-Control': 'public, max-age=300' };
     if (req.headers['if-none-match'] === file.etag) return send(res, 304, '', headers);
     return send(res, 200, req.method === 'HEAD' ? '' : file.body, headers);
@@ -202,7 +202,7 @@ function createHandler(deps = {}) {
     const started = Date.now();
     let pathname = '/';
     try {
-      pathname = new URL(req.url, 'http://localhost').pathname;
+      pathname = ((u) => { if (u.pathname.startsWith('/api/')) return u.pathname; const seen = [u.pathname, u.searchParams.get('op') || ''].concat(['x-matched-path', 'x-forwarded-uri', 'x-original-url', 'x-vercel-original-path', 'x-invoke-path'].map((h) => String(req.headers[h] || '').split('?')[0])); const hit = seen.map((t) => t.match(/(?:^|\/)(health|config|analyze|advisory)\/?$/)).find(Boolean); return hit ? '/api/' + hit[1] : u.pathname; })(new URL(req.url, 'http://localhost'));
       if (pathname.startsWith('/api/')) await handleApi(req, res, pathname);
       else handleStatic(req, res, pathname);
     } catch (err) {
