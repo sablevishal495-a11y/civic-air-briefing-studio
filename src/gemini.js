@@ -11,7 +11,10 @@
  */
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
+// Fastest models first: a briefing must come back well inside the request deadline.
+const DEFAULT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
+/** One slow model must not use up the whole deadline, so each attempt gets its own cap. */
+const ATTEMPT_TIMEOUT_MS = 22000;
 
 let workingModel = null;
 
@@ -92,7 +95,12 @@ async function generateJson({ system, user, timeoutMs = 50000 }, fetchImpl = fet
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text: user }] }],
   };
-  const variants = [{ ...base, generationConfig: { responseMimeType: 'application/json' } }, base];
+  // Preferred request first; if a model rejects an option (HTTP 400) the next, plainer variant is tried.
+  const variants = [
+    { ...base, generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'low' } } },
+    { ...base, generationConfig: { responseMimeType: 'application/json' } },
+    base,
+  ];
   let lastError = new AIError('No Gemini model was reachable.', 'unreachable');
 
   for (const model of modelList()) {
@@ -105,7 +113,7 @@ async function generateJson({ system, user, timeoutMs = 50000 }, fetchImpl = fet
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey() },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(remaining),
+          signal: AbortSignal.timeout(Math.min(remaining, ATTEMPT_TIMEOUT_MS)),
         });
       } catch (err) {
         lastError = new AIError(err.name === 'TimeoutError' ? 'The model took too long to answer.' : 'Could not reach the Gemini API.', 'network');

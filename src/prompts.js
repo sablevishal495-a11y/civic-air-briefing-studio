@@ -16,7 +16,7 @@
 const { POLLUTANTS, FLAGS } = require('./parse');
 const { AUDIENCES } = require('./rules');
 
-const MAX_PROMPT_ROWS = 220;
+const MAX_PROMPT_ROWS = 120;
 
 const LANGUAGES = {
   en: { code: 'en', name: 'English', native: 'English', dir: 'ltr' },
@@ -90,6 +90,7 @@ function buildBriefPrompt({ parsed, stats, comparison, audience, place }) {
     '- If one location in the data is clearly the audience\'s own site (a school for a school audience, a society for a housing society), centre the actions on the air at that site and mention the wider hotspots only as context.',
     '- Plain language. No jargon without a short explanation. No markdown.',
     `- ${UNTRUSTED}`,
+    '- Be concise so the answer arrives quickly: at most 35 words per text field.',
     '- Respond with a single JSON object and nothing else.',
   ].join('\n');
 

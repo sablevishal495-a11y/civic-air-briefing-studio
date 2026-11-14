@@ -152,7 +152,7 @@ test('Gemini client: model fallback, JSON-mode retry, auth errors, loose JSON', 
   assert.deepEqual(out.data, { a: 1 });
   assert.equal(seen[0].key, 'test-key');
   assert.ok(!seen[0].url.includes('test-key'), 'key is never placed in the URL');
-  assert.deepEqual(seen.map((s) => s.jsonMode), [true, true, false]);
+  assert.deepEqual(seen.filter((s) => !s.url.includes('model-a')).map((s) => s.jsonMode), [true, true, false]);
   assert.equal(gemini.currentModel(), out.model);
   await assert.rejects(gemini.generateJson({ system: 's', user: 'u' }, async () => ({ ok: false, status: 403, json: async () => ({}) })), /key was rejected/);
   assert.deepEqual(gemini.parseJsonLoose('Here you go: {"b": 2} thanks'), { b: 2 });
