@@ -1,0 +1,14 @@
+{
+  "name": "civic-air-briefing-studio",
+  "version": "1.0.0",
+  "description": "Turns raw, messy air quality data into a traceable briefing note, prioritised local actions and a multilingual citizen advisory, using Gemini.",
+  "main": "server.js",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "test": "NODE_ENV=test node --test"
+  }
+}

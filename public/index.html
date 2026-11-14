@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Civic Air Quality Briefing Studio</title>
+  <meta name="description" content="Turn raw, messy air quality readings into a traceable briefing note, prioritised local actions and a multilingual citizen advisory.">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5d57'/%3E%3Cpath d='M7 13h13a3 3 0 1 0-3-3M7 18h17a3 3 0 1 1-3 3M7 23h8' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <div>
+        <p class="eyebrow">Civic Air Quality</p>
+        <h1>Briefing Studio</h1>
+        <p class="lede">Paste raw air quality readings. Get a briefing note, prioritised local actions and a citizen advisory, with every finding linked to the rows it came from.</p>
+      </div>
+      <p id="ai-status" class="ai-status" role="status">Checking AI status…</p>
+    </div>
+  </header>
+
+  <main id="main" class="wrap">
+    <form id="studio-form" novalidate>
+      <section class="card" aria-labelledby="step-data">
+        <h2 id="step-data"><span class="step" aria-hidden="true">1</span>Add your air quality data</h2>
+        <p class="hint">Paste from a spreadsheet, a CSV or a message, or upload a file. Messy is fine: mixed date formats, units, blanks and sensor error codes are handled and flagged, never silently fixed.</p>
+
+        <div class="sample-row" role="group" aria-label="Load sample data">
+          <span class="sample-label">Try a sample:</span>
+          <button type="button" class="btn small" data-sample="week1">Week 1 (messy CSV)</button>
+          <button type="button" class="btn small" data-sample="week2">Week 2, compared with Week 1</button>
+          <button type="button" class="btn small" data-sample="notes">Free-text field notes (needs AI)</button>
+        </div>
+
+        <label for="raw">Air quality readings</label>
+        <textarea id="raw" name="raw" rows="9" spellcheck="false" aria-describedby="raw-help" placeholder="Station, Date, Time, PM2.5, PM10&#10;Main Road Junction, 02/11/2026, 08:00, 148, 262&#10;School Gate, 02/11/2026, 08:00, 84, N/A"></textarea>
+        <p id="raw-help" class="hint small">Recognised: PM2.5, PM10, NO₂, SO₂, O₃, CO and AQI columns, in wide or long layout.</p>
+
+        <div class="file-row">
+          <label class="btn small file-label" for="file">Upload a file</label>
+          <input class="visually-hidden" type="file" id="file" accept=".csv,.tsv,.txt,.json,.md,text/plain,text/csv">
+          <span id="file-name" class="hint small">.csv, .tsv, .txt or .json, up to 200 KB</span>
+          <button type="button" class="btn small quiet" id="clear-data">Clear</button>
+        </div>
+
+        <details id="previous-panel" class="previous">
+          <summary>Compare with an earlier period (optional)</summary>
+          <p class="hint">Every brief is saved in this browser and the next one is automatically compared with it. To compare straight away, paste the earlier period's readings here.</p>
+          <label for="previous-raw">Earlier readings</label>
+          <textarea id="previous-raw" name="previousRaw" rows="4" spellcheck="false"></textarea>
+          <div class="baseline-row">
+            <div>
+              <label for="baseline">Saved brief to compare with</label>
+              <select id="baseline" name="baseline"></select>
+            </div>
+            <button type="button" class="btn small quiet" id="clear-history">Delete saved briefs</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="card" aria-labelledby="step-audience">
+        <h2 id="step-audience"><span class="step" aria-hidden="true">2</span>Who is this briefing for?</h2>
+        <p class="hint">A ward officer, a housing society and a school can each do different things, so the recommended actions change with the audience.</p>
+        <fieldset class="audience">
+          <legend class="visually-hidden">Audience</legend>
+          <label class="choice">
+            <input type="radio" name="audience" value="ward" checked>
+            <span class="choice-body"><strong>Ward officer</strong><span>Sprinkling, inspections, burning patrols, traffic, public notices</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="audience" value="society">
+            <span class="choice-body"><strong>Housing society</strong><span>Housekeeping, renovation timing, generators, residents' notices</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="audience" value="school">
+            <span class="choice-body"><strong>School</strong><span>Timetable, outdoor activity, health room, messages to parents</span></span>
+          </label>
+        </fieldset>
+        <label for="place">Area or ward name <span class="optional">(optional)</span></label>
+        <input type="text" id="place" name="place" maxlength="80" autocomplete="off" placeholder="e.g. Ward 14, Pune">
+      </section>
+
+      <section class="card" aria-labelledby="step-languages">
+        <h2 id="step-languages"><span class="step" aria-hidden="true">3</span>Citizen advisory languages</h2>
+        <p class="hint">Pick up to four. Each advisory comes in an easy-read version, a standard version and an SMS, with tips for children, older adults and people sensitive to poor air.</p>
+        <fieldset>
+          <legend class="visually-hidden">Languages</legend>
+          <div id="languages" class="chips"></div>
+        </fieldset>
+      </section>
+
+      <div class="submit-bar">
+        <button type="submit" id="generate" class="btn primary">Generate briefing</button>
+        <label class="toggle"><input type="checkbox" id="use-ai" checked> Use Gemini to write the briefing</label>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </div>
+    </form>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <div id="results" hidden>
+      <nav class="subnav" aria-label="Briefing sections">
+        <a href="#overview">Overview</a>
+        <a href="#findings">Findings</a>
+        <a href="#actions">Actions</a>
+        <a href="#changes">What changed</a>
+        <a href="#note">Internal note</a>
+        <a href="#advisory">Citizen advisory</a>
+        <a href="#data">Data</a>
+      </nav>
+
+      <section id="overview" class="card result" aria-labelledby="overview-h" tabindex="-1">
+        <h2 id="overview-h">Overview</h2>
+        <div id="overview-body"></div>
+      </section>
+
+      <section id="findings" class="card result" aria-labelledby="findings-h">
+        <h2 id="findings-h">Findings and evidence</h2>
+        <p class="hint">Row chips such as <span class="chip-example">R7</span> open the exact rows a finding is based on.</p>
+        <div id="findings-body"></div>
+      </section>
+
+      <section id="actions" class="card result" aria-labelledby="actions-h">
+        <h2 id="actions-h">Prioritised actions</h2>
+        <div id="actions-body"></div>
+      </section>
+
+      <section id="changes" class="card result" aria-labelledby="changes-h">
+        <h2 id="changes-h">What changed since the last brief</h2>
+        <div id="changes-body"></div>
+      </section>
+
+      <section id="note" class="card result" aria-labelledby="note-h">
+        <h2 id="note-h">Internal briefing note</h2>
+        <div id="note-body"></div>
+      </section>
+
+      <section id="advisory" class="card result" aria-labelledby="advisory-h">
+        <h2 id="advisory-h">Citizen advisory</h2>
+        <div id="advisory-body"></div>
+      </section>
+
+      <section id="data" class="card result" aria-labelledby="data-h">
+        <h2 id="data-h">Data as read</h2>
+        <div id="data-body"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap footer">
+    <p>Categories follow India's CPCB National AQI bands applied to the readings you supply. They are indicative and do not replace official advisories or medical advice. Your data is processed to produce the brief and is not stored on the server.</p>
+  </footer>
+
+  <script src="/samples.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
