@@ -5,6 +5,8 @@
  *
  * Zero runtime dependencies (Node 20+ standard library only): serves the static
  * front end and three JSON endpoints. The Gemini API key lives only here.
+ * Runs unchanged on Cloud Run, Render, a laptop, or Vercel (which detects
+ * server.js and captures the listen() call below).
  */
 
 const http = require('node:http');
@@ -47,6 +49,8 @@ const SECURITY_HEADERS = {
 /** Static files are tiny, so load them once and serve from memory with ETags. */
 function loadStatic() {
   const files = new Map();
+  // On Vercel the CDN serves public/ and the function bundle may not contain it.
+  if (!fs.existsSync(PUBLIC_DIR)) return files;
   for (const name of fs.readdirSync(PUBLIC_DIR)) {
     const full = path.join(PUBLIC_DIR, name);
     if (!fs.statSync(full).isFile()) continue;
@@ -108,6 +112,19 @@ function readJson(req) {
       reject(new InputError('Content-Type must be application/json.', 415));
       return;
     }
+    // Serverless platforms such as Vercel read the body before the handler runs
+    // and expose it as req.body; the stream is then already finished.
+    if (req.readableEnded) {
+      try {
+        const body = req.body;
+        if (Buffer.isBuffer(body) || typeof body === 'string') resolve(JSON.parse(String(body)));
+        else if (body && typeof body === 'object') resolve(body);
+        else reject(new InputError('Request body is not valid JSON.'));
+      } catch {
+        reject(new InputError('Request body is not valid JSON.'));
+      }
+      return;
+    }
     const chunks = [];
     let size = 0;
     req.on('data', (chunk) => {
@@ -135,7 +152,8 @@ function clientIp(req) {
   return forwarded || req.socket.remoteAddress || 'unknown';
 }
 
-function createApp(deps = {}) {
+/** The request handler on its own, so it can run under http.createServer or as a serverless function. */
+function createHandler(deps = {}) {
   const ai = deps.ai || gemini;
   const files = loadStatic();
   const allow = createRateLimiter(deps.rateLimit || RATE_LIMIT);
@@ -180,7 +198,7 @@ function createApp(deps = {}) {
     return send(res, 200, req.method === 'HEAD' ? '' : file.body, headers);
   }
 
-  return http.createServer(async (req, res) => {
+  return async function handle(req, res) {
     const started = Date.now();
     let pathname = '/';
     try {
@@ -198,14 +216,22 @@ function createApp(deps = {}) {
         console.log(JSON.stringify({ level: 'info', method: req.method, path: pathname, status: res.statusCode, ms: Date.now() - started }));
       }
     }
-  });
+  };
 }
 
-if (require.main === module) {
+function createApp(deps = {}) {
+  return http.createServer(createHandler(deps));
+}
+
+// Start listening when run directly (node server.js) and on Vercel, whose Node
+// server support imports this file and captures the listen() call. Tests import
+// the module and start their own instances, so they are the one case that must not listen.
+const underTest = process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
+if (require.main === module || (process.env.VERCEL && !underTest)) {
   const port = Number(process.env.PORT) || 8080;
   createApp().listen(port, () => {
     console.log(JSON.stringify({ level: 'info', message: `Civic Air Quality Briefing Studio listening on :${port}`, ai: gemini.isConfigured() }));
   });
 }
 
-module.exports = { createApp, createRateLimiter };
+module.exports = { createApp, createHandler, createRateLimiter };
