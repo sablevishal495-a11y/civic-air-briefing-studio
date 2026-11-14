@@ -24,7 +24,7 @@ class AIError extends Error {
 }
 
 function apiKey() {
-  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GEMINI_KEY || process.env.API_KEY || Object.values(process.env).find((v) => /AIza[\w-]{30,}/.test(String(v))) || '').replace(/[^\w-]/g, '');
 }
 
 function isConfigured() {

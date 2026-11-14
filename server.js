@@ -166,7 +166,7 @@ function createHandler(deps = {}) {
     languages: Object.values(LANGUAGES),
     flags: FLAGS,
     pollutants: POLLUTANTS,
-    maxChars: MAX_RAW_CHARS,
+    maxChars: MAX_RAW_CHARS, keyLikeEnvNames: Object.keys(process.env).filter((k) => /gemini|google|api_?key/i.test(k)),
   });
 
   async function handleApi(req, res, pathname) {
