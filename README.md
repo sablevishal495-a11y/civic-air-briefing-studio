@@ -72,7 +72,7 @@ The advisory prompt receives only a small set of facts (status, worst areas, pea
 ## Google services
 
 - **Gemini API** (Google AI Studio key) through the REST `generateContent` endpoint. The client tries current Flash models newest first and remembers the one that works; override with `GEMINI_MODEL`.
-- **Cloud Run** for hosting (Dockerfile included).
+- Hosting: the same `server.js` runs on Vercel (live demo), on **Cloud Run** via the included Dockerfile, or locally.
 
 ## Run locally
 
@@ -86,8 +86,13 @@ npm run dev                 # http://localhost:8080
 Without a key the app still runs, using the rule engine.
 
 ```bash
-npm test                    # 36 tests, no network needed
+npm test                    # 38 tests, no network needed
+npm run lint                # ESLint (no-var, prefer-const, eqeqeq, no-shadow ...)
 ```
+
+## Deploy to Vercel
+
+Import the repository in Vercel, add `GEMINI_API_KEY` under Settings → Environment Variables, and deploy. Vercel detects `server.js`, whose export is the request handler, so no extra configuration is needed. `vercel.json` only adds security headers to CDN-served static files.
 
 ## Deploy to Cloud Run
 
@@ -103,12 +108,22 @@ The command prints the public URL. The header badge shows "Gemini connected" whe
 
 ## API
 
+Routes are matched by their final segment, so `/api/analyze` and `/svc/analyze` are equivalent. The front end uses `/svc/` because some hosts reserve the `/api` prefix.
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/health` | Liveness and whether Gemini is configured |
 | `GET /api/config` | Languages, audiences, flag descriptions |
 | `POST /api/analyze` | `{ raw, audience, place?, previousRaw?, previous?, useAI? }` → parsed rows, statistics, comparison, brief, internal note |
 | `POST /api/advisory` | `{ facts, language, audience }` → advisory in one language |
+
+## Efficiency
+
+- No runtime dependencies and no build step; cold starts load only the standard library.
+- Static files are read once, pre-compressed with gzip and served from memory with ETags; JSON responses over 1 KB are gzip-compressed.
+- Identical model requests are served from a short-lived cache, so re-opening a brief costs no model call.
+- Advisories for each language are requested in parallel and rendered as they arrive.
+- Large tables are sampled before being sent to the model (all flagged rows are always kept), which bounds prompt size.
 
 ## Security
 
@@ -142,7 +157,8 @@ src/compare.js     previous-versus-current comparison
 src/prompts.js     Gemini prompts and language list
 src/gemini.js      Gemini REST client with fallbacks
 src/brief.js       validation of model output, internal note text
-src/rules.js       rule-based brief and advisory
+src/rules.js       rule-based brief and audience action library
+src/advisory-templates.js  built-in English and Hindi advisory text
 src/pipeline.js    orchestration and input validation
 public/            front end (no framework, no build step)
 test/              node:test suites

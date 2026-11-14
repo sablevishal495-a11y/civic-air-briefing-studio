@@ -105,3 +105,39 @@ test('model-written results are cached for identical requests', async () => {
     assert.equal(calls, 1);
   });
 });
+
+test('API routes resolve under any prefix or by ?op=, as hosts rewrite paths differently', async () => {
+  await withServer({}, async (base) => {
+    for (const path of ['/api/health', '/svc/health', '/health', '/api?op=health', '/?op=health']) {
+      const res = await fetch(base + path);
+      assert.equal(res.status, 200, path);
+      assert.equal((await res.json()).ok, true, path);
+    }
+    assert.match((await fetch(`${base}/?op=unknown`)).headers.get('content-type'), /text\/html/);
+    const res = await post(base, '/svc/analyze?op=analyze', { raw: samples.week1.raw, audience: 'ward' });
+    assert.equal(res.status, 200);
+  });
+});
+
+test('large responses and static files are gzip-compressed when the client accepts it', async () => {
+  const http = require('node:http');
+  const zlib = require('node:zlib');
+  await withServer({}, async (base) => {
+    const get = (path, headers) => new Promise((resolve, reject) => {
+      http.get(base + path, { headers }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+      }).on('error', reject);
+    });
+    const zipped = await get('/app.js', { 'Accept-Encoding': 'gzip' });
+    const plain = await get('/app.js', {});
+    assert.equal(zipped.headers['content-encoding'], 'gzip');
+    assert.equal(plain.headers['content-encoding'], undefined);
+    assert.ok(zipped.body.length < plain.body.length / 2);
+    assert.deepEqual(zlib.gunzipSync(zipped.body), plain.body);
+    const config = await get('/api/config', { 'Accept-Encoding': 'gzip' });
+    assert.equal(config.headers['content-encoding'], 'gzip');
+    assert.ok(JSON.parse(zlib.gunzipSync(config.body)).languages.length >= 10);
+  });
+});

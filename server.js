@@ -13,6 +13,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 
 const { runAnalysis, runAdvisory, InputError, MAX_RAW_CHARS } = require('./src/pipeline');
 const { LANGUAGES } = require('./src/prompts');
@@ -25,6 +26,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const RATE_LIMIT = { windowMs: 60000, max: Number(process.env.RATE_LIMIT_PER_MIN) || 40 };
 const CACHE_TTL_MS = 10 * 60000;
 const CACHE_MAX = 60;
+const COMPRESS_MIN_BYTES = 1024;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -46,6 +48,28 @@ const SECURITY_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 };
 
+const API_ROUTES = ['health', 'config', 'analyze', 'advisory'];
+const ROUTE_PATTERN = new RegExp(`(?:^|/)(${API_ROUTES.join('|')})/?$`);
+
+/**
+ * Map a request to a canonical path.
+ *
+ * Hosting platforms differ in how they forward paths (Vercel reserves the
+ * "/api" prefix and may trim what follows), so an API route is recognised by
+ * its final segment under any prefix, or by an explicit "?op=" parameter.
+ * Anything else is returned unchanged and treated as a static file.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {string} "/api/<route>" for API calls, otherwise the request path
+ */
+function resolveRoute(req) {
+  const url = new URL(req.url, 'http://localhost');
+  const byPath = url.pathname.match(ROUTE_PATTERN);
+  if (byPath) return `/api/${byPath[1]}`;
+  const op = url.searchParams.get('op');
+  return API_ROUTES.includes(op) ? `/api/${op}` : url.pathname;
+}
+
 /** Static files are tiny, so load them once and serve from memory with ETags. */
 function loadStatic() {
   const files = new Map();
@@ -57,6 +81,7 @@ function loadStatic() {
     const body = fs.readFileSync(full);
     files.set(`/${name}`, {
       body,
+      gzip: zlib.gzipSync(body, { level: 9 }),
       type: MIME[path.extname(name)] || 'application/octet-stream',
       etag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"`,
     });
@@ -95,6 +120,8 @@ function createCache() {
   };
 }
 
+const acceptsGzip = (req) => /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+
 function send(res, status, body, headers = {}) {
   const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
@@ -104,6 +131,16 @@ function send(res, status, body, headers = {}) {
     ...headers,
   });
   res.end(payload);
+}
+
+/** JSON responses can be large (every parsed row is returned), so compress them when the client allows. */
+function sendJson(req, res, status, body) {
+  const json = JSON.stringify(body);
+  if (json.length < COMPRESS_MIN_BYTES || !acceptsGzip(req)) return send(res, status, json);
+  return zlib.gzip(json, (err, zipped) => {
+    if (err) send(res, status, json);
+    else send(res, status, zipped, { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+  });
 }
 
 function readJson(req) {
@@ -166,13 +203,13 @@ function createHandler(deps = {}) {
     languages: Object.values(LANGUAGES),
     flags: FLAGS,
     pollutants: POLLUTANTS,
-    maxChars: MAX_RAW_CHARS, keyLikeEnvNames: Object.keys(process.env).filter((k) => /gemini|google|api_?key/i.test(k)),
+    maxChars: MAX_RAW_CHARS,
   });
 
   async function handleApi(req, res, pathname) {
     if (pathname === '/api/health' || pathname === '/api/config') {
       if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed.' }, { Allow: 'GET' });
-      return send(res, 200, pathname === '/api/health' ? { ok: true, ai: ai.isConfigured() } : config());
+      return sendJson(req, res, 200, pathname === '/api/health' ? { ok: true, ai: ai.isConfigured() } : config());
     }
     const handler = { '/api/analyze': runAnalysis, '/api/advisory': runAdvisory }[pathname];
     if (!handler) return send(res, 404, { error: 'Not found.' });
@@ -182,27 +219,29 @@ function createHandler(deps = {}) {
     const body = await readJson(req);
     const key = crypto.createHash('sha256').update(pathname + JSON.stringify(body)).digest('hex');
     const cached = cache.get(key);
-    if (cached) return send(res, 200, { ...cached, cached: true });
+    if (cached) return sendJson(req, res, 200, { ...cached, cached: true });
     const result = await handler(body, { ai });
     // Only cache model-written results; rule results are instant and a retry should try the model again.
     if (result.mode === 'ai') cache.set(key, result);
-    return send(res, 200, result);
+    return sendJson(req, res, 200, result);
   }
 
   function handleStatic(req, res, pathname) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed.' }, { Allow: 'GET, HEAD' });
     const file = files.get(pathname === '/' ? '/index.html' : pathname);
-    if (!file) return send(res, 404, 'Not found: ' + req.url, { 'Content-Type': 'text/plain; charset=utf-8' });
-    const headers = { 'Content-Type': file.type, ETag: file.etag, 'Cache-Control': 'public, max-age=300' };
+    if (!file) return send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
+    const headers = { 'Content-Type': file.type, ETag: file.etag, 'Cache-Control': 'public, max-age=300', Vary: 'Accept-Encoding' };
     if (req.headers['if-none-match'] === file.etag) return send(res, 304, '', headers);
-    return send(res, 200, req.method === 'HEAD' ? '' : file.body, headers);
+    if (req.method === 'HEAD') return send(res, 200, '', headers);
+    if (acceptsGzip(req)) return send(res, 200, file.gzip, { ...headers, 'Content-Encoding': 'gzip' });
+    return send(res, 200, file.body, headers);
   }
 
   return async function handle(req, res) {
     const started = Date.now();
     let pathname = '/';
     try {
-      pathname = ((u) => { if (u.pathname.startsWith('/api/')) return u.pathname; const seen = [u.pathname, u.searchParams.get('op') || ''].concat(['x-matched-path', 'x-forwarded-uri', 'x-original-url', 'x-vercel-original-path', 'x-invoke-path'].map((h) => String(req.headers[h] || '').split('?')[0])); const hit = seen.map((t) => t.match(/(?:^|\/)(health|config|analyze|advisory)\/?$/)).find(Boolean); return hit ? '/api/' + hit[1] : u.pathname; })(new URL(req.url, 'http://localhost'));
+      pathname = resolveRoute(req);
       if (pathname.startsWith('/api/')) await handleApi(req, res, pathname);
       else handleStatic(req, res, pathname);
     } catch (err) {
@@ -223,11 +262,7 @@ function createApp(deps = {}) {
   return http.createServer(createHandler(deps));
 }
 
-// Start listening when run directly (node server.js) and on Vercel, whose Node
-// server support imports this file and captures the listen() call. Tests import
-// the module and start their own instances, so they are the one case that must not listen.
-const underTest = process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
-if (require.main === module || false) {
+if (require.main === module) {
   const port = Number(process.env.PORT) || 8080;
   createApp().listen(port, () => {
     console.log(JSON.stringify({ level: 'info', message: `Civic Air Quality Briefing Studio listening on :${port}`, ai: gemini.isConfigured() }));

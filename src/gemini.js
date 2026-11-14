@@ -23,8 +23,12 @@ class AIError extends Error {
   }
 }
 
+const KEY_ENV_NAMES = ['GEMINI_API_KEY', 'GOOGLE_API_KEY'];
+
+/** First configured key, with any stray quotes or whitespace from the hosting dashboard removed. */
 function apiKey() {
-  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GEMINI_KEY || process.env.API_KEY || Object.values(process.env).find((v) => /AIza[\w-]{30,}/.test(String(v))) || '').replace(/[^\w-]/g, '');
+  const raw = KEY_ENV_NAMES.map((name) => process.env[name]).find(Boolean) || '';
+  return raw.replace(/[^\w-]/g, '');
 }
 
 function isConfigured() {

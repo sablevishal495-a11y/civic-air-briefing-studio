@@ -5,10 +5,13 @@
   "main": "server.js",
   "license": "MIT",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --env-file-if-exists=.env --watch server.js",
-    "test": "NODE_ENV=test node --test"
+    "test": "NODE_ENV=test node --test",
+    "lint": "npx --yes eslint@9 ."
   }
 }

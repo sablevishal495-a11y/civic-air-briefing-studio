@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
 
-  var week1 = [
+  const week1 = [
     'Ward 14 air monitoring - weekly sheet (exported from field tablets)',
     'Station,Date,Time,PM2.5 (ug/m3),PM10,NO2 (ppb),Remarks',
     'Shivaji Nagar Junction,02/11/2026,08:00,148,262,41,heavy traffic',
@@ -38,7 +38,7 @@
     'Riverside Park,03/11/2026,20:00,52,97,14,stuck?'
   ].join('\n');
 
-  var week2 = [
+  const week2 = [
     '| Location | Timestamp | pm2_5 | pm10 | no2_ppb | notes |',
     '|---|---|---|---|---|---|',
     '| Shivaji Nagar Junction | 2026-11-09 08:00 | 109 | 196 | 36 | sprinkling started 6 Nov |',
@@ -74,7 +74,7 @@
     '| Riverside Park | 2026-11-10 20:00 | 53 | 95 | 14 | |'
   ].join('\n');
 
-  var notes = [
+  const notes = [
     'Field notes, Ward 14, 12 Nov 2026 (handheld monitor)',
     'Reached Shivaji Nagar Junction around 8 in the morning, PM2.5 was showing 162 and PM10 about 280.',
     'By 2pm the junction had come down to 120 (PM2.5).',
@@ -84,7 +84,7 @@
     'Riverside Park 11am - 48.'
   ].join('\n');
 
-  var samples = {
+  const samples = {
     week1: { raw: week1, previousRaw: '', place: 'Ward 14' },
     week2: { raw: week2, previousRaw: week1, place: 'Ward 14' },
     notes: { raw: notes, previousRaw: '', place: 'Ward 14' }

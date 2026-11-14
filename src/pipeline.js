@@ -14,7 +14,8 @@
 const { parseTable } = require('./parse');
 const { computeStats, makeSnapshot } = require('./analyze');
 const { compareSnapshots, sanitizeSnapshot } = require('./compare');
-const { buildRuleBrief, buildRuleAdvisory, advisoryFacts, AUDIENCES } = require('./rules');
+const { buildRuleBrief, advisoryFacts, AUDIENCES } = require('./rules');
+const { buildRuleAdvisory } = require('./advisory-templates');
 const { buildBriefPrompt, buildAdvisoryPrompt, buildRestructurePrompt, LANGUAGES } = require('./prompts');
 const { normalizeBrief, normalizeAdvisory, finalizeRuleBrief, renderInternalNote, recordsToTable } = require('./brief');
 const gemini = require('./gemini');
