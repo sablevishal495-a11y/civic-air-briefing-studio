@@ -63,7 +63,7 @@
   }
 
   function api(path, body) {
-    return fetch(path + '?op=' + path.split('/').pop(), {
+    return fetch(path.replace('/api/', '/svc/') + '?op=' + path.split('/').pop(), {
       method: body ? 'POST' : 'GET',
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined
