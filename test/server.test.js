@@ -82,8 +82,8 @@ test('rate limiting', async () => {
   assert.equal(allow('a', 0), true);
   assert.equal(allow('a', 1), true);
   assert.equal(allow('a', 2), false);
-  assert.equal(allow('b', 2), true);
-  assert.equal(allow('a', 1500), true);
+  assert.equal(allow('b', 2), true, 'clients are limited independently');
+  assert.equal(allow('a', 1500), true, 'a new window starts after windowMs');
   await withServer({ rateLimit: { windowMs: 60000, max: 1 } }, async (base) => {
     const body = { raw: samples.week1.raw, audience: 'ward' };
     assert.equal((await post(base, '/api/analyze', body)).status, 200);
@@ -140,4 +140,17 @@ test('large responses and static files are gzip-compressed when the client accep
     assert.equal(config.headers['content-encoding'], 'gzip');
     assert.ok(JSON.parse(zlib.gunzipSync(config.body)).languages.length >= 10);
   });
+});
+
+test('cache evicts the least recently used entry and expires old ones', () => {
+  const { createCache } = require('../src/http/ttl-cache');
+  const cache = createCache({ ttlMs: 100, maxEntries: 2 });
+  cache.set('a', 1, 0);
+  cache.set('b', 2, 0);
+  assert.equal(cache.get('a', 10), 1);
+  cache.set('c', 3, 10);
+  assert.equal(cache.get('b', 10), null, 'b was least recently used');
+  assert.equal(cache.get('a', 10), 1);
+  assert.equal(cache.get('c', 500), null, 'entries expire');
+  assert.equal(cache.size, 1);
 });

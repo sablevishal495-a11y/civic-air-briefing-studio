@@ -168,8 +168,8 @@ function qualitySummary(parsed, locations) {
  * @param {ReturnType<import('./parse').parseTable>} parsed
  */
 function computeStats(parsed) {
-  const usable = parsed.readings.filter((r) => r.ok);
-  const primary = PRIMARY_ORDER.find((p) => usable.some((r) => r.pollutant === p)) || null;
+  const usablePollutants = new Set(parsed.readings.filter((r) => r.ok).map((r) => r.pollutant));
+  const primary = PRIMARY_ORDER.find((p) => usablePollutants.has(p)) || null;
   if (!primary) {
     return { ok: false, error: 'No usable numeric readings were found. Every value was missing or flagged as unreliable.' };
   }
@@ -177,10 +177,7 @@ function computeStats(parsed) {
   const locations = parsed.locations.map((loc) => {
     const list = byLocation.get(loc.key) || [];
     const perPollutant = {};
-    parsed.pollutants.forEach((p) => {
-      const series = list.filter((r) => r.pollutant === p);
-      if (series.length) perPollutant[p] = seriesStats(p, series);
-    });
+    for (const [p, series] of groupBy(list, (r) => r.pollutant)) perPollutant[p] = seriesStats(p, series);
     const main = perPollutant[primary] || null;
     const worst = Object.values(perPollutant)
       .filter((s) => s.category)
@@ -217,7 +214,9 @@ function computeStats(parsed) {
   });
 
   const ranked = locations.filter((l) => l.mean != null).sort((a, b) => b.mean - a.mean);
-  const primaryReadings = parsed.readings.filter((r) => r.pollutant === primary);
+  // Group once; every per-pollutant statistic below reuses these lists.
+  const byPollutant = groupBy(parsed.readings, (r) => r.pollutant);
+  const primaryReadings = byPollutant.get(primary);
   const overall = seriesStats(primary, primaryReadings);
   ranked.forEach((l, i) => {
     l.rank = i + 1;
@@ -225,7 +224,12 @@ function computeStats(parsed) {
   });
   const hotspots = ranked.filter((l) => l.isHotspot).map((l) => l.key);
   const total = parsed.readings.length;
-  const excluded = parsed.readings.filter((r) => !r.ok).length;
+  let excluded = 0;
+  let missing = 0;
+  for (const r of parsed.readings) {
+    if (!r.ok) excluded += 1;
+    if (r.flags.includes('missing')) missing += 1;
+  }
 
   const stats = {
     ok: true,
@@ -240,7 +244,7 @@ function computeStats(parsed) {
       locations: locations.length,
       readings: total,
       usable: total - excluded,
-      missing: parsed.readings.filter((r) => r.flags.includes('missing')).length,
+      missing,
       excluded,
       coveragePct: total ? Math.round(((total - excluded) / total) * 100) : 0,
     },
@@ -249,7 +253,7 @@ function computeStats(parsed) {
       category: overall.category, trend: overall.trend,
     },
     otherPollutants: parsed.pollutants.filter((p) => p !== primary).map((p) => {
-      const s = seriesStats(p, parsed.readings.filter((r) => r.pollutant === p));
+      const s = seriesStats(p, byPollutant.get(p));
       return { pollutant: p, label: s.label, unit: s.unit, mean: s.mean, max: s.max, maxRow: s.maxRow, category: s.category, usable: s.usable };
     }),
     locations: [...ranked, ...locations.filter((l) => l.mean == null)],

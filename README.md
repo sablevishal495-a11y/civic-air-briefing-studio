@@ -8,7 +8,11 @@ Turns raw, messy air quality readings into three things a local team can act on:
 
 Every finding links back to the rows it came from, unreliable readings are flagged instead of silently fixed, and each new brief is compared with the previous one.
 
-Built for the PromptWars warm-up challenge. Generative AI (Google Gemini) is the core writer and interpreter; a deterministic engine does the arithmetic and keeps the app working if the model is unavailable.
+## Chosen vertical
+
+**Civic Air Quality Briefing Studio** — an AI-driven civic intelligence assistant for local authorities, housing societies and ward-level teams. The persona is a smart, context-aware briefing assistant: it reads whatever air quality data the user has, works out who is asking (ward officer, housing society or school) and what that audience can actually do, and responds with decisions tailored to that context.
+
+Built for the PromptWars challenge. Generative AI (Google Gemini) is the core writer and interpreter; a deterministic engine does the arithmetic and keeps the app working if the model is unavailable.
 
 ## Try it in one minute
 
@@ -86,7 +90,7 @@ npm run dev                 # http://localhost:8080
 Without a key the app still runs, using the rule engine.
 
 ```bash
-npm test                    # 38 tests, no network needed
+npm test                    # 39 tests, no network needed
 npm run lint                # ESLint (no-var, prefer-const, eqeqeq, no-shadow ...)
 ```
 
@@ -120,6 +124,8 @@ Routes are matched by their final segment, so `/api/analyze` and `/svc/analyze` 
 ## Efficiency
 
 - No runtime dependencies and no build step; cold starts load only the standard library.
+- Parsing and statistics are single-pass over the readings: rows are grouped once by location and pollutant, and every figure reuses those groups.
+- The rate limiter and the response cache are O(1) per request with bounded memory (fixed-window counters, LRU eviction).
 - Static files are read once, pre-compressed with gzip and served from memory with ETags; JSON responses over 1 KB are gzip-compressed.
 - Identical model requests are served from a short-lived cache, so re-opening a brief costs no model call.
 - Advisories for each language are requested in parallel and rendered as they arrive.
@@ -150,18 +156,30 @@ Semantic landmarks and headings, a skip link, labelled controls, visible focus, 
 ## Project layout
 
 ```
-server.js          HTTP server, security headers, rate limit, cache
-src/parse.js       messy-table parser and flagging
-src/analyze.js     statistics, bands, hotspots, trends
-src/compare.js     previous-versus-current comparison
-src/prompts.js     Gemini prompts and language list
-src/gemini.js      Gemini REST client with fallbacks
-src/brief.js       validation of model output, internal note text
-src/rules.js       rule-based brief and audience action library
-src/advisory-templates.js  built-in English and Hindi advisory text
-src/pipeline.js    orchestration and input validation
-public/            front end (no framework, no build step)
-test/              node:test suites
+server.js                 request handler and server entry (Vercel, Cloud Run, local)
+src/pipeline.js           orchestration and input validation
+src/parse/                messy-table parser, as a pipeline of small stages
+  index.js                  readTable → locateColumns → planColumns → buildRows
+  layout.js                 delimiter detection, cell splitting, JSON input
+  detect.js                 pollutant, unit and column-role recognition
+  time.js / value.js        date-time and cell-value parsing
+  checks.js                 duplicates, stuck sensors, spikes, unit mismatches
+  constants.js / util.js    pollutant and flag catalogues, shared helpers
+src/analyze.js            statistics, CPCB bands, hotspots, trends
+src/compare.js            previous-versus-current comparison
+src/prompts.js            Gemini prompts and language list
+src/gemini.js             Gemini REST client with fallbacks
+src/brief.js              validation of model output, internal note text
+src/rules.js              rule-based brief and audience action library
+src/advisory-templates.js built-in English and Hindi advisory text
+src/http/                 routing, static files, responses, body reading,
+                          O(1) rate limiter, LRU cache
+public/                   front end as ES modules, no framework or build step
+  app.js                    entry point: form → backend → sections
+  render-*.js               one module per section of the brief
+  dom.js, api.js, state.js, history.js, form.js, evidence.js
+test/                     node:test suites (39 tests)
+.github/workflows/ci.yml  lint and tests on every push
 ```
 
 ## License

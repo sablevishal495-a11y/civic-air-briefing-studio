@@ -10,10 +10,8 @@
  */
 
 const http = require('node:http');
-const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const zlib = require('node:zlib');
 
 const { runAnalysis, runAdvisory, InputError, MAX_RAW_CHARS } = require('./src/pipeline');
 const { LANGUAGES } = require('./src/prompts');
@@ -21,180 +19,22 @@ const { AUDIENCES } = require('./src/rules');
 const { FLAGS, POLLUTANTS } = require('./src/parse');
 const gemini = require('./src/gemini');
 
+const { resolveRoute } = require('./src/http/routes');
+const { loadStatic } = require('./src/http/static-files');
+const { acceptsGzip, send, sendJson } = require('./src/http/respond');
+const { readJson, clientIp } = require('./src/http/request');
+const { createRateLimiter } = require('./src/http/rate-limiter');
+const { createCache } = require('./src/http/ttl-cache');
+
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const MAX_BODY_BYTES = 1024 * 1024;
 const RATE_LIMIT = { windowMs: 60000, max: Number(process.env.RATE_LIMIT_PER_MIN) || 40 };
-const CACHE_TTL_MS = 10 * 60000;
-const CACHE_MAX = 60;
-const COMPRESS_MIN_BYTES = 1024;
+const CACHE = { ttlMs: 10 * 60000, maxEntries: 60 };
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.json': 'application/json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.csv': 'text/csv; charset=utf-8',
-};
-
-const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-};
-
-const API_ROUTES = ['health', 'config', 'analyze', 'advisory'];
-const ROUTE_PATTERN = new RegExp(`(?:^|/)(${API_ROUTES.join('|')})/?$`);
-
-/**
- * Map a request to a canonical path.
- *
- * Hosting platforms differ in how they forward paths (Vercel reserves the
- * "/api" prefix and may trim what follows), so an API route is recognised by
- * its final segment under any prefix, or by an explicit "?op=" parameter.
- * Anything else is returned unchanged and treated as a static file.
- *
- * @param {import('node:http').IncomingMessage} req
- * @returns {string} "/api/<route>" for API calls, otherwise the request path
- */
-function resolveRoute(req) {
-  const url = new URL(req.url, 'http://localhost');
-  const byPath = url.pathname.match(ROUTE_PATTERN);
-  if (byPath) return `/api/${byPath[1]}`;
-  const op = url.searchParams.get('op');
-  return API_ROUTES.includes(op) ? `/api/${op}` : url.pathname;
-}
-
-/** Static files are tiny, so load them once and serve from memory with ETags. */
-function loadStatic() {
-  const files = new Map();
-  // On Vercel the CDN serves public/ and the function bundle may not contain it.
-  if (!fs.existsSync(PUBLIC_DIR)) return files;
-  for (const name of fs.readdirSync(PUBLIC_DIR)) {
-    const full = path.join(PUBLIC_DIR, name);
-    if (!fs.statSync(full).isFile()) continue;
-    const body = fs.readFileSync(full);
-    files.set(`/${name}`, {
-      body,
-      gzip: zlib.gzipSync(body, { level: 9 }),
-      type: MIME[path.extname(name)] || 'application/octet-stream',
-      etag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"`,
-    });
-  }
-  return files;
-}
-
-function createRateLimiter({ windowMs, max }) {
-  const hits = new Map();
-  return function allow(key, now = Date.now()) {
-    const recent = (hits.get(key) || []).filter((t) => now - t < windowMs);
-    if (recent.length >= max) {
-      hits.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    hits.set(key, recent);
-    if (hits.size > 5000) hits.clear();
-    return true;
-  };
-}
-
-/** Small TTL cache so repeating the same request does not call the model again. */
-function createCache() {
-  const store = new Map();
-  return {
-    get(key) {
-      const hit = store.get(key);
-      if (!hit || Date.now() - hit.at > CACHE_TTL_MS) return null;
-      return hit.value;
-    },
-    set(key, value) {
-      if (store.size >= CACHE_MAX) store.delete(store.keys().next().value);
-      store.set(key, { at: Date.now(), value });
-    },
-  };
-}
-
-const acceptsGzip = (req) => /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
-
-function send(res, status, body, headers = {}) {
-  const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    ...SECURITY_HEADERS,
-    ...headers,
-  });
-  res.end(payload);
-}
-
-/** JSON responses can be large (every parsed row is returned), so compress them when the client allows. */
-function sendJson(req, res, status, body) {
-  const json = JSON.stringify(body);
-  if (json.length < COMPRESS_MIN_BYTES || !acceptsGzip(req)) return send(res, status, json);
-  return zlib.gzip(json, (err, zipped) => {
-    if (err) send(res, status, json);
-    else send(res, status, zipped, { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
-  });
-}
-
-function readJson(req) {
-  return new Promise((resolve, reject) => {
-    if (!/application\/json/i.test(req.headers['content-type'] || '')) {
-      reject(new InputError('Content-Type must be application/json.', 415));
-      return;
-    }
-    // Serverless platforms such as Vercel read the body before the handler runs
-    // and expose it as req.body; the stream is then already finished.
-    if (req.readableEnded) {
-      try {
-        const body = req.body;
-        if (Buffer.isBuffer(body) || typeof body === 'string') resolve(JSON.parse(String(body)));
-        else if (body && typeof body === 'object') resolve(body);
-        else reject(new InputError('Request body is not valid JSON.'));
-      } catch {
-        reject(new InputError('Request body is not valid JSON.'));
-      }
-      return;
-    }
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      // Past the limit, stop buffering but let the upload finish so the client gets a clean 413.
-      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (size > MAX_BODY_BYTES) {
-        reject(new InputError('Request is too large.', 413));
-        return;
-      }
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch {
-        reject(new InputError('Request body is not valid JSON.'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function clientIp(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.socket.remoteAddress || 'unknown';
-}
-
-/** The request handler on its own, so it can run under http.createServer or as a serverless function. */
 function createHandler(deps = {}) {
   const ai = deps.ai || gemini;
-  const files = loadStatic();
+  const files = loadStatic(PUBLIC_DIR);
   const allow = createRateLimiter(deps.rateLimit || RATE_LIMIT);
-  const cache = createCache();
+  const cache = createCache(CACHE);
 
   const config = () => ({
     ai: ai.isConfigured(),
