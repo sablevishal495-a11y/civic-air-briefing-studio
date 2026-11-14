@@ -227,11 +227,14 @@ function createApp(deps = {}) {
 // server support imports this file and captures the listen() call. Tests import
 // the module and start their own instances, so they are the one case that must not listen.
 const underTest = process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
-if (require.main === module || (process.env.VERCEL && !underTest)) {
+if (require.main === module || false) {
   const port = Number(process.env.PORT) || 8080;
   createApp().listen(port, () => {
     console.log(JSON.stringify({ level: 'info', message: `Civic Air Quality Briefing Studio listening on :${port}`, ai: gemini.isConfigured() }));
   });
 }
 
-module.exports = { createApp, createHandler, createRateLimiter };
+module.exports = createHandler();
+module.exports.createApp = createApp;
+module.exports.createHandler = createHandler;
+module.exports.createRateLimiter = createRateLimiter;
