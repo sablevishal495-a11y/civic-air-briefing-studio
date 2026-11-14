@@ -25,10 +25,21 @@ class AIError extends Error {
 
 const KEY_ENV_NAMES = ['GEMINI_API_KEY', 'GOOGLE_API_KEY'];
 
-/** First configured key, with any stray quotes or whitespace from the hosting dashboard removed. */
+/** First configured key, with surrounding quotes or whitespace from the hosting dashboard removed. */
 function apiKey() {
   const raw = KEY_ENV_NAMES.map((name) => process.env[name]).find(Boolean) || '';
-  return raw.replace(/[^\w-]/g, '');
+  return raw.trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+/** The API's own explanation of a failed call, shortened and safe to show to the user. */
+async function apiErrorMessage(response) {
+  try {
+    const payload = await response.json();
+    const message = String((payload.error && payload.error.message) || '').replace(/\s+/g, ' ').trim();
+    return message ? `: ${message.slice(0, 160)}` : '';
+  } catch {
+    return '';
+  }
 }
 
 function isConfigured() {
@@ -113,7 +124,7 @@ async function generateJson({ system, user, timeoutMs = 50000 }, fetchImpl = fet
       if (response.status === 401 || response.status === 403) {
         throw new AIError('The Gemini API key was rejected. Check GEMINI_API_KEY.', 'auth');
       }
-      lastError = new AIError(`Gemini API returned HTTP ${response.status} for ${model}.`, `http_${response.status}`);
+      lastError = new AIError(`Gemini API returned HTTP ${response.status} for ${model}${await apiErrorMessage(response)}`, `http_${response.status}`);
       if (response.status !== 400) break; // 404 / 429 / 5xx: move on to the next model
     }
   }

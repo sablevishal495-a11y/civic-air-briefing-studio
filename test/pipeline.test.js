@@ -157,6 +157,11 @@ test('Gemini client: model fallback, JSON-mode retry, auth errors, loose JSON', 
   await assert.rejects(gemini.generateJson({ system: 's', user: 'u' }, async () => ({ ok: false, status: 403, json: async () => ({}) })), /key was rejected/);
   assert.deepEqual(gemini.parseJsonLoose('Here you go: {"b": 2} thanks'), { b: 2 });
   assert.throws(() => gemini.parseJsonLoose('no json here'));
+  process.env.GEMINI_API_KEY = ' "AQ.key-with.dots_1" ';
+  let sentKey = '';
+  const failing = async (url, init) => { sentKey = init.headers['x-goog-api-key']; return { ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid.' } }) }; };
+  await assert.rejects(gemini.generateJson({ system: 's', user: 'u' }, failing), /HTTP 400 .*API key not valid/);
+  assert.equal(sentKey, 'AQ.key-with.dots_1', 'quotes and spaces are trimmed, the key itself is untouched');
   delete process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_MODEL;
   gemini.resetForTests();
